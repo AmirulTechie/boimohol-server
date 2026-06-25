@@ -35,11 +35,21 @@ async function run() {
     const booksCollection = database.collection('books')
 
     app.post('/books', async (req, res) => {
-      const book = req.body;
-      console.log(book);
-      const result = await booksCollection.insertOne(book);
-      res.send(result);
-    })
+    try {
+    const book = req.body;
+
+    const result = await booksCollection.insertOne(book);
+
+    res.send(result);
+    } catch (error) {
+    console.error(error);
+
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
 
 
     // Send a ping to confirm a successful connection
@@ -47,7 +57,7 @@ async function run() {
     console.log("Pinged your deployment. You successfully connected to MongoDB!");
   } finally {
     // Ensures that the client will close when you finish/error
-    await client.close();
+    return;
   }
 }
 run().catch(console.dir);
