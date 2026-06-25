@@ -34,6 +34,19 @@ async function run() {
     const database = client.db('boimohol-db')
     const booksCollection = database.collection('books')
 
+
+    app.get('/books', async (req, res) => {
+    try {
+    const books = await booksCollection.find().toArray();
+    res.send(books);
+    } catch (error) {
+    console.error(error);
+    res.status(500).send({
+      message: error.message
+    });
+    }
+  });
+
     app.post('/books', async (req, res) => {
     try {
     const book = req.body;
