@@ -14,7 +14,6 @@ app.get('/', (req, res) => {
 });
 
 const uri = process.env.MONGODB_URI;
-
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -30,35 +29,30 @@ async function run() {
     const database = client.db('boimohol-db');
     const usersCollection = database.collection('user');
     const booksCollection = database.collection('books');
+    const deliveriesCollection = database.collection('deliveries');
+    const reviewsCollection = database.collection('reviews');
 
     // ── Users ──────────────────────────────────────────────────────────────
 
-    // GET all users
     app.get('/users', async (req, res) => {
       try {
         const users = await usersCollection.find().toArray();
         res.json(users);
       } catch (error) {
-        console.error(error);
         res.status(500).json({ success: false, message: error.message });
       }
     });
 
-    // GET single user by id
     app.get('/users/:id', async (req, res) => {
       try {
-        const user = await usersCollection.findOne({
-          _id: new ObjectId(req.params.id),
-        });
+        const user = await usersCollection.findOne({ _id: new ObjectId(req.params.id) });
         if (!user) return res.status(404).json({ message: 'User not found' });
         res.json(user);
       } catch (error) {
-        console.error(error);
         res.status(500).json({ success: false, message: error.message });
       }
     });
 
-    // PATCH user role
     app.patch('/users/:id', async (req, res) => {
       try {
         const { role } = req.body;
@@ -66,102 +60,248 @@ async function run() {
           { _id: new ObjectId(req.params.id) },
           { $set: { role } }
         );
-        if (result.matchedCount === 0)
-          return res.status(404).json({ message: 'User not found' });
+        if (result.matchedCount === 0) return res.status(404).json({ message: 'User not found' });
         res.json({ success: true, result });
       } catch (error) {
-        console.error(error);
         res.status(500).json({ success: false, message: error.message });
       }
     });
 
-    // DELETE user
     app.delete('/users/:id', async (req, res) => {
       try {
-        const result = await usersCollection.deleteOne({
-          _id: new ObjectId(req.params.id),
-        });
-        if (result.deletedCount === 0)
-          return res.status(404).json({ message: 'User not found' });
+        const result = await usersCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+        if (result.deletedCount === 0) return res.status(404).json({ message: 'User not found' });
         res.json({ success: true, result });
       } catch (error) {
-        console.error(error);
         res.status(500).json({ success: false, message: error.message });
       }
     });
 
     // ── Books ──────────────────────────────────────────────────────────────
 
-    // GET all books
     app.get('/books', async (req, res) => {
       try {
         const books = await booksCollection.find().toArray();
         res.json(books);
       } catch (error) {
-        console.error(error);
         res.status(500).json({ success: false, message: error.message });
       }
     });
 
-    // GET single book by id
     app.get('/books/:id', async (req, res) => {
       try {
-        const book = await booksCollection.findOne({
-          _id: new ObjectId(req.params.id),
-        });
+        const book = await booksCollection.findOne({ _id: new ObjectId(req.params.id) });
         if (!book) return res.status(404).json({ message: 'Book not found' });
         res.json(book);
       } catch (error) {
-        console.error(error);
         res.status(500).json({ success: false, message: error.message });
       }
     });
 
-    // POST add a book
     app.post('/books', async (req, res) => {
       try {
         const result = await booksCollection.insertOne(req.body);
         res.status(201).json({ success: true, result });
       } catch (error) {
-        console.error(error);
         res.status(500).json({ success: false, message: error.message });
       }
     });
 
-    // PATCH book status (or any other fields)
     app.patch('/books/:id', async (req, res) => {
       try {
-        const { status, ...rest } = req.body;
-        const updates = { ...(status && { status }), ...rest };
+        const updates = req.body;
         const result = await booksCollection.updateOne(
           { _id: new ObjectId(req.params.id) },
           { $set: updates }
         );
-        if (result.matchedCount === 0)
-          return res.status(404).json({ message: 'Book not found' });
+        if (result.matchedCount === 0) return res.status(404).json({ message: 'Book not found' });
         res.json({ success: true, result });
       } catch (error) {
-        console.error(error);
         res.status(500).json({ success: false, message: error.message });
       }
     });
 
-    // DELETE book
     app.delete('/books/:id', async (req, res) => {
       try {
-        const result = await booksCollection.deleteOne({
+        const result = await booksCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+        if (result.deletedCount === 0) return res.status(404).json({ message: 'Book not found' });
+        res.json({ success: true, result });
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
+    // ── Deliveries ─────────────────────────────────────────────────────────
+
+    // POST — create a new delivery (called after Stripe success)
+    app.post('/deliveries', async (req, res) => {
+      try {
+        const delivery = {
+          ...req.body,
+          status: 'Pending',
+          createdAt: new Date().toISOString(),
+        };
+        const result = await deliveriesCollection.insertOne(delivery);
+        res.status(201).json({ success: true, result });
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
+    // GET all deliveries (admin)
+    app.get('/deliveries', async (req, res) => {
+      try {
+        const deliveries = await deliveriesCollection.find().toArray();
+        res.json(deliveries);
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
+    // GET deliveries by userId (user dashboard)
+    app.get('/deliveries/user/:userId', async (req, res) => {
+      try {
+        const deliveries = await deliveriesCollection
+          .find({ userId: req.params.userId })
+          .toArray();
+        res.json(deliveries);
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
+    // GET deliveries by librarianId (librarian dashboard)
+    app.get('/deliveries/librarian/:librarianId', async (req, res) => {
+      try {
+        const deliveries = await deliveriesCollection
+          .find({ librarianId: req.params.librarianId })
+          .toArray();
+        res.json(deliveries);
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
+    // PATCH delivery status (librarian updates Pending→Dispatched→Delivered)
+    app.patch('/deliveries/:id', async (req, res) => {
+      try {
+        const { status } = req.body;
+        const result = await deliveriesCollection.updateOne(
+          { _id: new ObjectId(req.params.id) },
+          { $set: { status } }
+        );
+        if (result.matchedCount === 0)
+          return res.status(404).json({ message: 'Delivery not found' });
+
+        // If status is Delivered, also update the book status back to Available
+        if (status === 'Delivered') {
+          const delivery = await deliveriesCollection.findOne({
+            _id: new ObjectId(req.params.id),
+          });
+          if (delivery?.bookId) {
+            await booksCollection.updateOne(
+              { _id: new ObjectId(delivery.bookId) },
+              { $set: { status: 'Available' } }
+            );
+          }
+        }
+
+        res.json({ success: true, result });
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
+    // ── Reviews ────────────────────────────────────────────────────────────
+
+    // GET reviews by bookId
+    app.get('/reviews/:bookId', async (req, res) => {
+      try {
+        const reviews = await reviewsCollection
+          .find({ bookId: req.params.bookId })
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.json(reviews);
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
+    // POST a review — only if user has a Delivered delivery for this book
+    app.post('/reviews', async (req, res) => {
+      try {
+        const { bookId, userId, rating, comment, userName, userImage } = req.body;
+
+        // Guard — check if user has a delivered delivery for this book
+        const eligibleDelivery = await deliveriesCollection.findOne({
+          bookId,
+          userId,
+          status: 'Delivered',
+        });
+
+        if (!eligibleDelivery) {
+          return res.status(403).json({
+            success: false,
+            message: 'You can only review books that have been delivered to you.',
+          });
+        }
+
+        // Guard — check if user already reviewed this book
+        const alreadyReviewed = await reviewsCollection.findOne({ bookId, userId });
+        if (alreadyReviewed) {
+          return res.status(409).json({
+            success: false,
+            message: 'You have already reviewed this book.',
+          });
+        }
+
+        const review = {
+          bookId,
+          userId,
+          userName,
+          userImage: userImage || null,
+          rating,
+          comment,
+          createdAt: new Date().toISOString(),
+        };
+
+        const result = await reviewsCollection.insertOne(review);
+        res.status(201).json({ success: true, result });
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
+    // DELETE a review (user deletes their own)
+    app.delete('/reviews/:id', async (req, res) => {
+      try {
+        const result = await reviewsCollection.deleteOne({
           _id: new ObjectId(req.params.id),
         });
         if (result.deletedCount === 0)
-          return res.status(404).json({ message: 'Book not found' });
+          return res.status(404).json({ message: 'Review not found' });
         res.json({ success: true, result });
       } catch (error) {
-        console.error(error);
         res.status(500).json({ success: false, message: error.message });
       }
     });
 
-    // ── Health check ───────────────────────────────────────────────────────
+    // PATCH a review (user edits their own)
+    app.patch('/reviews/:id', async (req, res) => {
+      try {
+        const { rating, comment } = req.body;
+        const result = await reviewsCollection.updateOne(
+          { _id: new ObjectId(req.params.id) },
+          { $set: { rating, comment } }
+        );
+        if (result.matchedCount === 0)
+          return res.status(404).json({ message: 'Review not found' });
+        res.json({ success: true, result });
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
     await client.db('admin').command({ ping: 1 });
     console.log('Pinged your deployment. Successfully connected to MongoDB!');
   } catch (error) {
