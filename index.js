@@ -226,7 +226,18 @@ async function run() {
         res.status(500).json({ success: false, message: error.message });
       }
     });
-
+    // GET reviews by userId (user dashboard)
+  app.get('/reviews/user/:userId', async (req, res) => {
+  try {
+    const reviews = await reviewsCollection
+      .find({ userId: req.params.userId })
+      .sort({ createdAt: -1 })
+      .toArray();
+    res.json(reviews);
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
     // POST a review — only if user has a Delivered delivery for this book
     app.post('/reviews', async (req, res) => {
       try {
