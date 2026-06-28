@@ -3,11 +3,38 @@ require('dotenv').config();
 const express = require('express');
 const app = express();
 const cors = require('cors');
+const jwt = require('jsonwebtoken');
 const port = process.env.PORT || 5000;
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 
 app.use(cors());
 app.use(express.json());
+
+// ── Auth middleware ────────────────────────────────────────────────────────────
+
+function verifyToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  if (!authHeader?.startsWith('Bearer ')) {
+    return res.status(401).json({ success: false, message: 'Missing token' });
+  }
+  const token = authHeader.slice(7);
+  try {
+    const decoded = jwt.verify(token, process.env.BETTER_AUTH_SECRET);
+    req.user = decoded; // { userId, email, role }
+    next();
+  } catch (err) {
+    return res.status(401).json({ success: false, message: 'Invalid or expired token' });
+  }
+}
+
+function requireRole(...roles) {
+  return (req, res, next) => {
+    if (!roles.includes(req.user?.role)) {
+      return res.status(403).json({ success: false, message: 'Forbidden: insufficient role' });
+    }
+    next();
+  };
+}
 
 app.get('/', (req, res) => {
   res.send('This is the server of Boimohol!');
@@ -34,7 +61,8 @@ async function run() {
 
     // ── Users ──────────────────────────────────────────────────────────────
 
-    app.get('/users', async (req, res) => {
+    // Public — admin dashboard reads all users
+    app.get('/users', verifyToken, requireRole('admin'), async (req, res) => {
       try {
         const users = await usersCollection.find().toArray();
         res.json(users);
@@ -43,7 +71,7 @@ async function run() {
       }
     });
 
-    app.get('/users/:id', async (req, res) => {
+    app.get('/users/:id', verifyToken, requireRole('admin'), async (req, res) => {
       try {
         const user = await usersCollection.findOne({ _id: new ObjectId(req.params.id) });
         if (!user) return res.status(404).json({ message: 'User not found' });
@@ -53,7 +81,8 @@ async function run() {
       }
     });
 
-    app.patch('/users/:id', async (req, res) => {
+    // Protected — admin only
+    app.patch('/users/:id', verifyToken, requireRole('admin'), async (req, res) => {
       try {
         const { role } = req.body;
         const result = await usersCollection.updateOne(
@@ -67,7 +96,8 @@ async function run() {
       }
     });
 
-    app.delete('/users/:id', async (req, res) => {
+    // Protected — admin only
+    app.delete('/users/:id', verifyToken, requireRole('admin'), async (req, res) => {
       try {
         const result = await usersCollection.deleteOne({ _id: new ObjectId(req.params.id) });
         if (result.deletedCount === 0) return res.status(404).json({ message: 'User not found' });
@@ -78,84 +108,86 @@ async function run() {
     });
 
     // ── Books ──────────────────────────────────────────────────────────────
-    // GET all books unfiltered — for admin/internal use
-app.get('/books/all', async (req, res) => {
-  try {
-    const books = await booksCollection.find().sort({ _id: -1 }).toArray(); // ← add sort
-    res.json(books);
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-    // GET all books — with server-side filtering, search, and pagination
-app.get('/books', async (req, res) => {
-  try {
-    const {
-      search,
-      category,
-      minFee,
-      maxFee,
-      availability,
-      page = 1,
-      limit = 10,
-    } = req.query;
 
-    const query = {};
-
-    // Always exclude Pending Approval from public browse
-    query.status = { $ne: 'Pending Approval' };
-
-    // Search by title or author (case-insensitive)
-    if (search && search.trim()) {
-      query.$or = [
-        { title:  { $regex: search.trim(), $options: 'i' } },
-        { author: { $regex: search.trim(), $options: 'i' } },
-      ];
-    }
-
-    // Category filter
-    if (category && category !== 'All') {
-      query.category = category;
-    }
-
-    // Delivery fee range
-    if (minFee || maxFee) {
-      query.deliveryFee = {};
-      if (minFee) query.deliveryFee.$gte = parseFloat(minFee);
-      if (maxFee) query.deliveryFee.$lte = parseFloat(maxFee);
-    }
-
-    // Availability filter
-    if (availability && availability !== 'All') {
-      if (availability === 'Available') {
-        // Available means Published and not checked out
-        query.status = 'Published';
-      } else if (availability === 'Checked Out') {
-        query.status = 'Checked Out';
+    // Public — admin/home featured books, all unfiltered
+    app.get('/books/all', async (req, res) => {
+      try {
+        const books = await booksCollection.find().sort({ _id: -1 }).toArray();
+        res.json(books);
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
       }
-    }
-
-    const pageNum  = Math.max(1, parseInt(page));
-    const limitNum = Math.min(20, Math.max(1, parseInt(limit)));
-    const skip     = (pageNum - 1) * limitNum;
-
-    const [books, total] = await Promise.all([
-  booksCollection.find(query).sort({ _id: -1 }).skip(skip).limit(limitNum).toArray(), // ← add sort
-  booksCollection.countDocuments(query),
-]);
-
-    res.json({
-      books,
-      total,
-      page:       pageNum,
-      totalPages: Math.ceil(total / limitNum),
-      limit:      limitNum,
     });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
 
+    // Public — browse page with server-side filtering, search, and pagination
+    app.get('/books', async (req, res) => {
+      try {
+        const {
+          search,
+          category,
+          minFee,
+          maxFee,
+          availability,
+          page = 1,
+          limit = 10,
+        } = req.query;
+
+        const query = {};
+
+        // Always exclude Pending Approval from public browse
+        query.status = { $ne: 'Pending Approval' };
+
+        // Search by title or author (case-insensitive)
+        if (search && search.trim()) {
+          query.$or = [
+            { title:  { $regex: search.trim(), $options: 'i' } },
+            { author: { $regex: search.trim(), $options: 'i' } },
+          ];
+        }
+
+        // Category filter
+        if (category && category !== 'All') {
+          query.category = category;
+        }
+
+        // Delivery fee range
+        if (minFee || maxFee) {
+          query.deliveryFee = {};
+          if (minFee) query.deliveryFee.$gte = parseFloat(minFee);
+          if (maxFee) query.deliveryFee.$lte = parseFloat(maxFee);
+        }
+
+        // Availability filter
+        if (availability && availability !== 'All') {
+          if (availability === 'Available') {
+            query.status = 'Published';
+          } else if (availability === 'Checked Out') {
+            query.status = 'Checked Out';
+          }
+        }
+
+        const pageNum  = Math.max(1, parseInt(page));
+        const limitNum = Math.min(20, Math.max(1, parseInt(limit)));
+        const skip     = (pageNum - 1) * limitNum;
+
+        const [books, total] = await Promise.all([
+          booksCollection.find(query).sort({ _id: -1 }).skip(skip).limit(limitNum).toArray(),
+          booksCollection.countDocuments(query),
+        ]);
+
+        res.json({
+          books,
+          total,
+          page:       pageNum,
+          totalPages: Math.ceil(total / limitNum),
+          limit:      limitNum,
+        });
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
+    // Public — single book detail page
     app.get('/books/:id', async (req, res) => {
       try {
         const book = await booksCollection.findOne({ _id: new ObjectId(req.params.id) });
@@ -166,7 +198,8 @@ app.get('/books', async (req, res) => {
       }
     });
 
-    app.post('/books', async (req, res) => {
+    // Protected — librarian or admin only
+    app.post('/books', verifyToken, requireRole('librarian', 'admin'), async (req, res) => {
       try {
         const result = await booksCollection.insertOne(req.body);
         res.status(201).json({ success: true, result });
@@ -175,7 +208,8 @@ app.get('/books', async (req, res) => {
       }
     });
 
-    app.patch('/books/:id', async (req, res) => {
+    // Protected — librarian or admin only
+    app.patch('/books/:id', verifyToken, requireRole('librarian', 'admin'), async (req, res) => {
       try {
         const updates = req.body;
         const result = await booksCollection.updateOne(
@@ -189,7 +223,8 @@ app.get('/books', async (req, res) => {
       }
     });
 
-    app.delete('/books/:id', async (req, res) => {
+    // Protected — librarian or admin only
+    app.delete('/books/:id', verifyToken, requireRole('librarian', 'admin'), async (req, res) => {
       try {
         const result = await booksCollection.deleteOne({ _id: new ObjectId(req.params.id) });
         if (result.deletedCount === 0) return res.status(404).json({ message: 'Book not found' });
@@ -201,8 +236,8 @@ app.get('/books', async (req, res) => {
 
     // ── Deliveries ─────────────────────────────────────────────────────────
 
-    // POST — create a new delivery (called after Stripe success)
-    app.post('/deliveries', async (req, res) => {
+    // Protected — any logged-in user (called after Stripe success)
+    app.post('/deliveries', verifyToken, requireRole('user', 'librarian', 'admin'), async (req, res) => {
       try {
         const delivery = {
           ...req.body,
@@ -216,8 +251,8 @@ app.get('/books', async (req, res) => {
       }
     });
 
-    // GET all deliveries (admin)
-    app.get('/deliveries', async (req, res) => {
+    // Protected — admin only
+    app.get('/deliveries', verifyToken, requireRole('admin'), async (req, res) => {
       try {
         const deliveries = await deliveriesCollection.find().toArray();
         res.json(deliveries);
@@ -226,8 +261,8 @@ app.get('/books', async (req, res) => {
       }
     });
 
-    // GET deliveries by userId (user dashboard)
-    app.get('/deliveries/user/:userId', async (req, res) => {
+    // Protected — any logged-in user (user views their own deliveries)
+    app.get('/deliveries/user/:userId', verifyToken, requireRole('user', 'librarian', 'admin'), async (req, res) => {
       try {
         const deliveries = await deliveriesCollection
           .find({ userId: req.params.userId })
@@ -238,8 +273,8 @@ app.get('/books', async (req, res) => {
       }
     });
 
-    // GET deliveries by librarianId (librarian dashboard)
-    app.get('/deliveries/librarian/:librarianId', async (req, res) => {
+    // Protected — librarian or admin only
+    app.get('/deliveries/librarian/:librarianId', verifyToken, requireRole('librarian', 'admin'), async (req, res) => {
       try {
         const deliveries = await deliveriesCollection
           .find({ librarianId: req.params.librarianId })
@@ -250,8 +285,8 @@ app.get('/books', async (req, res) => {
       }
     });
 
-    // PATCH delivery status (librarian updates Pending→Dispatched→Delivered)
-    app.patch('/deliveries/:id', async (req, res) => {
+    // Protected — librarian or admin only (Pending → Dispatched → Delivered)
+    app.patch('/deliveries/:id', verifyToken, requireRole('librarian', 'admin'), async (req, res) => {
       try {
         const { status } = req.body;
         const result = await deliveriesCollection.updateOne(
@@ -282,7 +317,7 @@ app.get('/books', async (req, res) => {
 
     // ── Reviews ────────────────────────────────────────────────────────────
 
-    // GET reviews by bookId
+    // Public — anyone can read reviews
     app.get('/reviews/:bookId', async (req, res) => {
       try {
         const reviews = await reviewsCollection
@@ -294,20 +329,22 @@ app.get('/books', async (req, res) => {
         res.status(500).json({ success: false, message: error.message });
       }
     });
-    // GET reviews by userId (user dashboard)
-  app.get('/reviews/user/:userId', async (req, res) => {
-  try {
-    const reviews = await reviewsCollection
-      .find({ userId: req.params.userId })
-      .sort({ createdAt: -1 })
-      .toArray();
-    res.json(reviews);
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-    // POST a review — only if user has a Delivered delivery for this book
-    app.post('/reviews', async (req, res) => {
+
+    // Public — user dashboard reads their own reviews
+    app.get('/reviews/user/:userId', async (req, res) => {
+      try {
+        const reviews = await reviewsCollection
+          .find({ userId: req.params.userId })
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.json(reviews);
+      } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+      }
+    });
+
+    // Protected — any logged-in user (must have a Delivered delivery for this book)
+    app.post('/reviews', verifyToken, requireRole('user', 'librarian', 'admin'), async (req, res) => {
       try {
         const { bookId, userId, rating, comment, userName, userImage } = req.body;
 
@@ -351,8 +388,8 @@ app.get('/books', async (req, res) => {
       }
     });
 
-    // DELETE a review (user deletes their own)
-    app.delete('/reviews/:id', async (req, res) => {
+    // Protected — any logged-in user (only their own reviews)
+    app.delete('/reviews/:id', verifyToken, requireRole('user', 'librarian', 'admin'), async (req, res) => {
       try {
         const result = await reviewsCollection.deleteOne({
           _id: new ObjectId(req.params.id),
@@ -365,8 +402,8 @@ app.get('/books', async (req, res) => {
       }
     });
 
-    // PATCH a review (user edits their own)
-    app.patch('/reviews/:id', async (req, res) => {
+    // Protected — any logged-in user (only their own reviews)
+    app.patch('/reviews/:id', verifyToken, requireRole('user', 'librarian', 'admin'), async (req, res) => {
       try {
         const { rating, comment } = req.body;
         const result = await reviewsCollection.updateOne(
