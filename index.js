@@ -81,7 +81,7 @@ async function run() {
     // GET all books unfiltered — for admin/internal use
 app.get('/books/all', async (req, res) => {
   try {
-    const books = await booksCollection.find().toArray();
+    const books = await booksCollection.find().sort({ _id: -1 }).toArray(); // ← add sort
     res.json(books);
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -140,9 +140,9 @@ app.get('/books', async (req, res) => {
     const skip     = (pageNum - 1) * limitNum;
 
     const [books, total] = await Promise.all([
-      booksCollection.find(query).skip(skip).limit(limitNum).toArray(),
-      booksCollection.countDocuments(query),
-    ]);
+  booksCollection.find(query).sort({ _id: -1 }).skip(skip).limit(limitNum).toArray(), // ← add sort
+  booksCollection.countDocuments(query),
+]);
 
     res.json({
       books,
