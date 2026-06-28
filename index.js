@@ -78,15 +78,83 @@ async function run() {
     });
 
     // ── Books ──────────────────────────────────────────────────────────────
+    // GET all books unfiltered — for admin/internal use
+app.get('/books/all', async (req, res) => {
+  try {
+    const books = await booksCollection.find().toArray();
+    res.json(books);
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+    // GET all books — with server-side filtering, search, and pagination
+app.get('/books', async (req, res) => {
+  try {
+    const {
+      search,
+      category,
+      minFee,
+      maxFee,
+      availability,
+      page = 1,
+      limit = 10,
+    } = req.query;
 
-    app.get('/books', async (req, res) => {
-      try {
-        const books = await booksCollection.find().toArray();
-        res.json(books);
-      } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+    const query = {};
+
+    // Always exclude Pending Approval from public browse
+    query.status = { $ne: 'Pending Approval' };
+
+    // Search by title or author (case-insensitive)
+    if (search && search.trim()) {
+      query.$or = [
+        { title:  { $regex: search.trim(), $options: 'i' } },
+        { author: { $regex: search.trim(), $options: 'i' } },
+      ];
+    }
+
+    // Category filter
+    if (category && category !== 'All') {
+      query.category = category;
+    }
+
+    // Delivery fee range
+    if (minFee || maxFee) {
+      query.deliveryFee = {};
+      if (minFee) query.deliveryFee.$gte = parseFloat(minFee);
+      if (maxFee) query.deliveryFee.$lte = parseFloat(maxFee);
+    }
+
+    // Availability filter
+    if (availability && availability !== 'All') {
+      if (availability === 'Available') {
+        // Available means Published and not checked out
+        query.status = 'Published';
+      } else if (availability === 'Checked Out') {
+        query.status = 'Checked Out';
       }
+    }
+
+    const pageNum  = Math.max(1, parseInt(page));
+    const limitNum = Math.min(20, Math.max(1, parseInt(limit)));
+    const skip     = (pageNum - 1) * limitNum;
+
+    const [books, total] = await Promise.all([
+      booksCollection.find(query).skip(skip).limit(limitNum).toArray(),
+      booksCollection.countDocuments(query),
+    ]);
+
+    res.json({
+      books,
+      total,
+      page:       pageNum,
+      totalPages: Math.ceil(total / limitNum),
+      limit:      limitNum,
     });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 
     app.get('/books/:id', async (req, res) => {
       try {
