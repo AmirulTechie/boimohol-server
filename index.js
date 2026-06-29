@@ -271,7 +271,25 @@ app.get('/books/all', async (req, res) => {
     });
   }
 });
-
+    // PATCH /books/:id/status — any logged-in user (post-payment only)
+app.patch('/books/:id/status', verifyToken, requireRole('user', 'librarian', 'admin'), async (req, res) => {
+  try {
+    const { status } = req.body;
+    // Only allow specific status transitions from users
+    const allowedStatuses = ['Checked Out', 'Pending Delivery'];
+    if (!allowedStatuses.includes(status)) {
+      return res.status(403).json({ message: 'Not allowed' });
+    }
+    const result = await booksCollection.updateOne(
+      { _id: new ObjectId(req.params.id) },
+      { $set: { status, updatedAt: new Date().toISOString() } }
+    );
+    if (result.matchedCount === 0) return res.status(404).json({ message: 'Book not found' });
+    res.json({ success: true, result });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
     // Protected — librarian or admin only
     app.patch('/books/:id', verifyToken, requireRole('librarian', 'admin'), async (req, res) => {
       try {
