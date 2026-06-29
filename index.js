@@ -59,53 +59,77 @@ async function run() {
     const deliveriesCollection = database.collection('deliveries');
     const reviewsCollection = database.collection('reviews');
 
-    // ── Users ──────────────────────────────────────────────────────────────
+   // ── Users ──────────────────────────────────────────────────────────────
 
-    // Public — admin dashboard reads all users
-    app.get('/users', verifyToken, requireRole('admin'), async (req, res) => {
-      try {
-        const users = await usersCollection.find().toArray();
-        res.json(users);
-      } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-      }
-    });
+// All users — admin only
+app.get('/users', verifyToken, requireRole('admin'), async (req, res) => {
+  try {
+    const users = await usersCollection.find().toArray();
+    res.json(users);
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 
-    app.get('/users/:id', verifyToken, requireRole('admin'), async (req, res) => {
-      try {
-        const user = await usersCollection.findOne({ _id: new ObjectId(req.params.id) });
-        if (!user) return res.status(404).json({ message: 'User not found' });
-        res.json(user);
-      } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-      }
-    });
+// ✅ /me routes FIRST — before /:id
+app.get('/users/me', verifyToken, async (req, res) => {
+  try {
+    const user = await usersCollection.findOne({ _id: new ObjectId(req.user.userId) });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 
-    // Protected — admin only
-    app.patch('/users/:id', verifyToken, requireRole('admin'), async (req, res) => {
-      try {
-        const { role } = req.body;
-        const result = await usersCollection.updateOne(
-          { _id: new ObjectId(req.params.id) },
-          { $set: { role } }
-        );
-        if (result.matchedCount === 0) return res.status(404).json({ message: 'User not found' });
-        res.json({ success: true, result });
-      } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-      }
-    });
+app.patch('/users/me', verifyToken, async (req, res) => {
+  try {
+    const { name, image } = req.body;
+    const result = await usersCollection.updateOne(
+      { _id: new ObjectId(req.user.userId) },
+      { $set: { name, image, updatedAt: new Date().toISOString() } }
+    );
+    if (result.matchedCount === 0) return res.status(404).json({ message: 'User not found' });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 
-    // Protected — admin only
-    app.delete('/users/:id', verifyToken, requireRole('admin'), async (req, res) => {
-      try {
-        const result = await usersCollection.deleteOne({ _id: new ObjectId(req.params.id) });
-        if (result.deletedCount === 0) return res.status(404).json({ message: 'User not found' });
-        res.json({ success: true, result });
-      } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-      }
-    });
+// ✅ /:id routes AFTER
+app.get('/users/:id', verifyToken, requireRole('admin'), async (req, res) => {
+  try {
+    const user = await usersCollection.findOne({ _id: new ObjectId(req.params.id) });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.patch('/users/:id', verifyToken, requireRole('admin'), async (req, res) => {
+  try {
+    const { role } = req.body;
+    const result = await usersCollection.updateOne(
+      { _id: new ObjectId(req.params.id) },
+      { $set: { role } }
+    );
+    if (result.matchedCount === 0) return res.status(404).json({ message: 'User not found' });
+    res.json({ success: true, result });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.delete('/users/:id', verifyToken, requireRole('admin'), async (req, res) => {
+  try {
+    const result = await usersCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+    if (result.deletedCount === 0) return res.status(404).json({ message: 'User not found' });
+    res.json({ success: true, result });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 
     // ── Books ──────────────────────────────────────────────────────────────
 
