@@ -134,14 +134,38 @@ app.delete('/users/:id', verifyToken, requireRole('admin'), async (req, res) => 
     // ── Books ──────────────────────────────────────────────────────────────
 
     // Public — admin/home featured books, all unfiltered
-    app.get('/books/all', async (req, res) => {
-      try {
-        const books = await booksCollection.find().sort({ _id: -1 }).toArray();
-        res.json(books);
-      } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-      }
+app.get('/books/all', async (req, res) => {
+  try {
+    const books = await booksCollection.find().sort({ _id: -1 }).toArray();
+
+    const booksWithLibrarians = await Promise.all(
+      books.map(async (book) => {
+        if (!book.librarian) return book;
+
+        try {
+          const librarian = await usersCollection.findOne(
+            { _id: new ObjectId(book.librarian) },
+            { projection: { name: 1, email: 1, image: 1, role: 1 } }
+          );
+
+          return {
+            ...book,
+            librarian,
+          };
+        } catch {
+          return book;
+        }
+      })
+    );
+
+    res.json(booksWithLibrarians);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
     });
+  }
+});
 
     // Public — browse page with server-side filtering, search, and pagination
     app.get('/books', async (req, res) => {
@@ -159,7 +183,7 @@ app.delete('/users/:id', verifyToken, requireRole('admin'), async (req, res) => 
         const query = {};
 
         // Always exclude Pending Approval from public browse
-        query.status = { $ne: 'Pending Approval' };
+        query.status = { $in: ['Published', 'Checked Out'] };
 
         // Search by title or author (case-insensitive)
         if (search && search.trim()) {
@@ -224,18 +248,37 @@ app.delete('/users/:id', verifyToken, requireRole('admin'), async (req, res) => 
 
     // Protected — librarian or admin only
     app.post('/books', verifyToken, requireRole('librarian', 'admin'), async (req, res) => {
-      try {
-        const result = await booksCollection.insertOne(req.body);
-        res.status(201).json({ success: true, result });
-      } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-      }
+  try {
+
+    const book = {
+      ...req.body,
+      librarian: req.user.userId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const result = await booksCollection.insertOne(book);
+
+    res.status(201).json({
+      success: true,
+      result,
     });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+});
 
     // Protected — librarian or admin only
     app.patch('/books/:id', verifyToken, requireRole('librarian', 'admin'), async (req, res) => {
       try {
-        const updates = req.body;
+        const updates = {
+  ...req.body,
+  updatedAt: new Date().toISOString(),
+};
         const result = await booksCollection.updateOne(
           { _id: new ObjectId(req.params.id) },
           { $set: updates }
