@@ -6,7 +6,7 @@
 
 ## Live API Base URL
 
-[https://your-api-url.vercel.app](https://your-api-url.vercel.app)
+[https://boimohol-server.onrender.com](https://boimohol-server.onrender.com)
 
 ---
 
@@ -138,11 +138,4 @@ This server handles all data operations, authentication verification, and third-
 
 ## Deployment
 
-This API is deployed on Vercel. All environment variables are configured in the Vercel project settings. The server does not throw CORS, 404, or 504 errors in production. CORS is configured to accept requests from the live frontend URL only.
-
----
-
-## Repository
-
-- Server Repository: [https://github.com/your-username/boimohol-server](https://github.com/your-username/boimohol-server)
-- Client Repository: [https://github.com/your-username/boimohol-client](https://github.com/your-username/boimohol-client)
+This API is deployed on Render. All environment variables are configured in the Render project settings. The server does not throw CORS, 404, or 504 errors in production. CORS is configured to accept requests from the live frontend URL only.
