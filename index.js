@@ -505,6 +505,12 @@ app.patch('/books/:id/status', verifyToken, requireRole('user', 'librarian', 'ad
         res.status(500).json({ success: false, message: error.message });
       }
     });
+    app.get("/health", (req, res) => {
+    res.status(200).json({
+    status: "OK",
+    timestamp: new Date(),
+    });
+    });
 
     await client.db('admin').command({ ping: 1 });
     console.log('Pinged your deployment. Successfully connected to MongoDB!');
