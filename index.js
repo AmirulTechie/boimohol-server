@@ -32,6 +32,7 @@ function verifyToken(req, res, next) {
 
 function requireRole(...roles) {
   return (req, res, next) => {
+    console.log('requireRole check — req.user:', JSON.stringify(req.user), 'allowed:', roles);
     if (!roles.includes(req.user?.role)) {
       return res.status(403).json({ success: false, message: 'Forbidden: insufficient role' });
     }
@@ -276,13 +277,31 @@ app.get('/books/all', async (req, res) => {
 });
     // PATCH /books/:id/status — any logged-in user (post-payment only)
 app.patch('/books/:id/status', verifyToken, requireRole('user', 'librarian', 'admin'), async (req, res) => {
+  console.log('ROLE FROM TOKEN:', JSON.stringify(req.user.role));
+  console.log('STATUS BEING SET:', JSON.stringify(req.body.status));
   try {
     const { status } = req.body;
-    // Only allow specific status transitions from users
-    const allowedStatuses = ['Checked Out', 'Pending Delivery'];
-    if (!allowedStatuses.includes(status)) {
+
+    const statusPermissions = {
+      user: ['Checked Out', 'Pending Delivery'],
+      librarian: ['Checked Out', 'Pending Delivery', 'Published', 'Rejected'],
+      admin: ['Checked Out', 'Pending Delivery', 'Published', 'Rejected'],
+    };
+
+    const allowedForRole = statusPermissions[req.user.role] || [];
+    if (!allowedForRole.includes(status)) {
       return res.status(403).json({ message: 'Not allowed' });
     }
+
+    // Librarians may only change status on books they own
+    if (req.user.role === 'librarian') {
+      const book = await booksCollection.findOne({ _id: new ObjectId(req.params.id) });
+      if (!book) return res.status(404).json({ message: 'Book not found' });
+      if (book.librarianId !== req.user.userId) {
+        return res.status(403).json({ message: 'You can only edit your own books' });
+      }
+    }
+
     const result = await booksCollection.updateOne(
       { _id: new ObjectId(req.params.id) },
       { $set: { status, updatedAt: new Date().toISOString() } }
@@ -374,35 +393,21 @@ app.patch('/books/:id/status', verifyToken, requireRole('user', 'librarian', 'ad
     });
 
     // Protected — librarian or admin only (Pending → Dispatched → Delivered)
-    app.patch('/deliveries/:id', verifyToken, requireRole('librarian', 'admin'), async (req, res) => {
-      try {
-        const { status } = req.body;
-        const result = await deliveriesCollection.updateOne(
-          { _id: new ObjectId(req.params.id) },
-          { $set: { status } }
-        );
-        if (result.matchedCount === 0)
-          return res.status(404).json({ message: 'Delivery not found' });
+app.patch('/deliveries/:id', verifyToken, requireRole('librarian', 'admin'), async (req, res) => {
+  try {
+    const { status } = req.body;
+    const result = await deliveriesCollection.updateOne(
+      { _id: new ObjectId(req.params.id) },
+      { $set: { status } }
+    );
+    if (result.matchedCount === 0)
+      return res.status(404).json({ message: 'Delivery not found' });
 
-        // If status is Delivered, also update the book status back to Available
-        if (status === 'Delivered') {
-          const delivery = await deliveriesCollection.findOne({
-            _id: new ObjectId(req.params.id),
-          });
-          if (delivery?.bookId) {
-            await booksCollection.updateOne(
-              { _id: new ObjectId(delivery.bookId) },
-              { $set: { status: 'Available' } }
-            );
-          }
-        }
-
-        res.json({ success: true, result });
-      } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-      }
-    });
-
+    res.json({ success: true, result });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
     // ── Reviews ────────────────────────────────────────────────────────────
 
     // Public — anyone can read reviews
@@ -420,16 +425,27 @@ app.patch('/books/:id/status', verifyToken, requireRole('user', 'librarian', 'ad
 
     // Public — user dashboard reads their own reviews
     app.get('/reviews/user/:userId', async (req, res) => {
-      try {
-        const reviews = await reviewsCollection
-          .find({ userId: req.params.userId })
-          .sort({ createdAt: -1 })
-          .toArray();
-        res.json(reviews);
-      } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-      }
-    });
+  try {
+    const reviews = await reviewsCollection
+      .find({ userId: req.params.userId })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    const withTitles = await Promise.all(
+      reviews.map(async (r) => {
+        const book = await booksCollection.findOne(
+          { _id: new ObjectId(r.bookId) },
+          { projection: { title: 1 } }
+        );
+        return { ...r, bookTitle: book?.title ?? "Unknown book" };
+      })
+    );
+
+    res.json(withTitles);
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 
     // Protected — any logged-in user (must have a Delivered delivery for this book)
     app.post('/reviews', verifyToken, requireRole('user', 'librarian', 'admin'), async (req, res) => {
