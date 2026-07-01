@@ -32,7 +32,6 @@ function verifyToken(req, res, next) {
 
 function requireRole(...roles) {
   return (req, res, next) => {
-    console.log('requireRole check — req.user:', JSON.stringify(req.user), 'allowed:', roles);
     if (!roles.includes(req.user?.role)) {
       return res.status(403).json({ success: false, message: 'Forbidden: insufficient role' });
     }
@@ -277,8 +276,6 @@ app.get('/books/all', async (req, res) => {
 });
     // PATCH /books/:id/status — any logged-in user (post-payment only)
 app.patch('/books/:id/status', verifyToken, requireRole('user', 'librarian', 'admin'), async (req, res) => {
-  console.log('ROLE FROM TOKEN:', JSON.stringify(req.user.role));
-  console.log('STATUS BEING SET:', JSON.stringify(req.body.status));
   try {
     const { status } = req.body;
 
@@ -360,13 +357,25 @@ app.patch('/books/:id/status', verifyToken, requireRole('user', 'librarian', 'ad
 
     // Protected — admin only
     app.get('/deliveries', verifyToken, requireRole('admin'), async (req, res) => {
-      try {
-        const deliveries = await deliveriesCollection.find().toArray();
-        res.json(deliveries);
-      } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-      }
-    });
+  try {
+    const deliveries = await deliveriesCollection.find().toArray();
+
+    const withLibrarians = await Promise.all(
+      deliveries.map(async (d) => {
+        if (!d.librarianId) return d;
+        const librarian = await usersCollection.findOne(
+          { _id: new ObjectId(d.librarianId) },
+          { projection: { email: 1 } }
+        );
+        return { ...d, librarianEmail: librarian?.email ?? "—" };
+      })
+    );
+
+    res.json(withLibrarians);
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 
     // Protected — any logged-in user (user views their own deliveries)
     app.get('/deliveries/user/:userId', verifyToken, requireRole('user', 'librarian', 'admin'), async (req, res) => {
